@@ -13,6 +13,7 @@ use scraper::Html;
 
 
 mod config;
+mod endpoints;
 
 const BASE_URL: &str = "https://rackhost.hu";
 
