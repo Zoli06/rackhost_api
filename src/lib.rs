@@ -10,15 +10,14 @@
 // ^^  bro really tried to use Copilot ^^
 
 use std::marker::PhantomData;
-use reqwest::{Client, Error, Url};
-use scraper::Html;
-use crate::endpoints::{BASE_URL, DOMAIN_SEARCH_PATH};
-
-mod endpoints;
-
+use anyhow::bail;
+use reqwest::{Client, Url};
+use scraper::{Html, Selector};
 
 struct Authed;
 struct NotAuthed;
+
+const BASE_URL: &str = "https://www.rackhost.hu";
 
 #[derive(Debug)]
 pub struct RackhostClient<L /* Login State (or validation) */> {
@@ -29,29 +28,33 @@ pub struct RackhostClient<L /* Login State (or validation) */> {
 impl RackhostClient<NotAuthed> {
     pub fn new(client: Client) -> Self {
         Self {
-            _phantom_state: PhantomData::default(),
+            _phantom_state: PhantomData,
             client
         }
     }
 
-    pub async fn authenticate(mut self, username: impl Into<String>, password: impl Into<String>) -> anyhow::Result<RackhostClient<Authed>> {
-        let csrf_token = Self::get_csrf_token(&mut self).await?;
+    pub async fn authenticate(self, username: impl Into<String>, password: impl Into<String>) -> anyhow::Result<RackhostClient<Authed>> {
+        let url = format!("{}/site/login", BASE_URL);
 
-        let response = self.client.post(endpoints::BASE_URL.to_owned() + endpoints::LOGIN_PATH)
+        let csrf_token = self.get_csrf_token().await?;
+        let response = self
+            .client
+            .post(url)
             .form(&[
                 ("rackhost-csrf", csrf_token),
                 ("LoginForm[username]", username.into()),
                 ("LoginForm[password]", password.into())
             ])
-            .send().await?;
+            .send()
+            .await?;
 
-        if response.url().as_str() == endpoints::BASE_URL.to_owned() + endpoints::LOGIN_PATH {
-            anyhow::bail!("Login failed");
+        if !response.status().is_redirection() {
+            bail!("Login failed");
         }
 
-        Ok(RackhostClient::<Authed>{
-            _phantom_state: PhantomData::default(),
-            client: self.client,
+        Ok(RackhostClient {
+            _phantom_state: PhantomData,
+            client: self.client
         })
     }
 }
@@ -60,12 +63,10 @@ impl RackhostClient<Authed> {
 }
 
 impl<L> RackhostClient<L> { // shared behaviour
-    
-    
     pub async fn search_domain(&self, name: impl Into<String>) -> anyhow::Result<Vec<DomainInfo>> {
         unimplemented!();
         let url = Url::parse_with_params(
-            &format!("{}{}", BASE_URL, DOMAIN_SEARCH_PATH), 
+            format!("{}/domain", BASE_URL).as_str(),
             &[("domainList", name.into())])
             .expect("Failed to parse URL");
         
@@ -112,13 +113,24 @@ impl<L> RackhostClient<L> { // shared behaviour
         Ok(vec![])
     }
 
-    pub async fn get_csrf_token(&mut self) -> Result<String, Error> {
-        let response = self.client.get(endpoints::BASE_URL.to_owned() + "/site/login").send().await?;
+    // TODO: check if csrf from login is also valid for other endpoints
+    async fn get_csrf_token(&self) -> anyhow::Result<String> {
+        let url = format!("{}/site/login", BASE_URL);
+        let response = self
+            .client
+            .get(url)
+            .send()
+            .await?;
         let body = response.text().await?;
         let document = Html::parse_document(&body);
-        let path = scraper::Selector::parse("input[name=rackhost-csrf]").unwrap();
-        let csrf_token = document.select(&path).next().unwrap().value().attr("value").unwrap();
-
+        let path = Selector::parse("input[name=rackhost-csrf]").expect("Invalid selector");
+        let csrf_token = document
+            .select(&path)
+            .next()
+            .expect("No csrf input element found")
+            .value()
+            .attr("value")
+            .expect("No csrf token found");
         Ok(csrf_token.to_owned())
     }
 }
@@ -133,14 +145,14 @@ impl Default for RackhostClient<NotAuthed> {
 }
 
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
-enum DomainState {
+pub enum DomainState {
     Available,
     Unavailable,
     OwnedByUser
 }
 
 #[derive(Debug, Clone)]
-struct DomainInfo {
+pub struct DomainInfo {
     pub url: Url,
     pub domain_state: DomainState
 }
