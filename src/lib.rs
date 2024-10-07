@@ -10,43 +10,38 @@
 // ^^  bro really tried to use Copilot ^^
 
 use std::marker::PhantomData;
-use reqwest::Client;
+use reqwest::{Client, Error, Url};
+use scraper::Html;
+use crate::endpoints::{BASE_URL, DOMAIN_SEARCH_PATH};
+
 mod endpoints;
+
 
 struct Authed;
 struct NotAuthed;
-pub struct RackHostClient<LS /* Login State (or validation) */> {
-    _phantom_state: PhantomData<LS>,
 
-    username: String,
-    password: String,
-    user_agent: String,
-
+#[derive(Debug)]
+pub struct RackhostClient<L /* Login State (or validation) */> {
+    _phantom_state: PhantomData<L>,
     client: Client,
 }
 
-mod utils {
-    use reqwest::{Client, Error};
-    use scraper::Html;
-    use crate::endpoints;
-
-    pub async fn get_csrf_token(client: &Client) -> Result<String, Error> {
-        let response = client.get(endpoints::BASE_URL.to_owned() + "/site/login").send().await?;
-        let body = response.text().await?;
-        let document = Html::parse_document(&body);
-        let path = scraper::Selector::parse("input[name=rackhost-csrf]").unwrap();
-        let csrf_token = document.select(&path).next().unwrap().value().attr("value").unwrap();
-        
-        Ok(csrf_token.to_owned())
+impl RackhostClient<NotAuthed> {
+    pub fn new(client: Client) -> Self {
+        Self {
+            _phantom_state: PhantomData::default(),
+            client
+        }
     }
-    
-    pub async fn authenticate(client: &mut Client, username: String, password: String) -> anyhow::Result<()> {
-        let csrf_token = get_csrf_token(client).await?;
-        let response = client.post(endpoints::BASE_URL.to_owned() + endpoints::LOGIN_PATH)
+
+    pub async fn authenticate(mut self, username: impl Into<String>, password: impl Into<String>) -> anyhow::Result<RackhostClient<Authed>> {
+        let csrf_token = Self::get_csrf_token(&mut self).await?;
+
+        let response = self.client.post(endpoints::BASE_URL.to_owned() + endpoints::LOGIN_PATH)
             .form(&[
                 ("rackhost-csrf", csrf_token),
-                ("LoginForm[username]", username),
-                ("LoginForm[password]", password)
+                ("LoginForm[username]", username.into()),
+                ("LoginForm[password]", password.into())
             ])
             .send().await?;
 
@@ -54,45 +49,100 @@ mod utils {
             anyhow::bail!("Login failed");
         }
 
-        Ok(())
-    }
-}
-
-impl RackHostClient<NotAuthed> {
-    pub fn new(username: String, password: String) -> Self {
-        Self {
+        Ok(RackhostClient::<Authed>{
             _phantom_state: PhantomData::default(),
-            username,
-            password,
-            user_agent: "Firefox".to_string(), // current default
-            client: Client::new(),
-        }
-    }
-    pub async fn authenticate(mut self) -> anyhow::Result<RackHostClient<Authed>> {
-        utils::authenticate(&mut self.client, self.username.clone(), self.password.clone()).await?;
-        Ok(RackHostClient::<Authed>{
-            _phantom_state: PhantomData::default(),
-            username: self.username,
-            password: self.password,
-            user_agent: self.user_agent,
             client: self.client,
         })
     }
 }
 
-impl RackHostClient<Authed> {
-    pub async fn login(username: String, password: String) -> anyhow::Result<Self> {
-        let mut client = Self {
-            _phantom_state: PhantomData::default(),
-            username,
-            password,
-            user_agent: "Firefox".to_owned(),
-            client: Client::new()
-        };
+impl RackhostClient<Authed> {
+}
+
+impl<L> RackhostClient<L> { // shared behaviour
+    
+    
+    pub async fn search_domain(&self, name: impl Into<String>) -> anyhow::Result<Vec<DomainInfo>> {
+        unimplemented!();
+        let url = Url::parse_with_params(
+            &format!("{}{}", BASE_URL, DOMAIN_SEARCH_PATH), 
+            &[("domainList", name.into())])
+            .expect("Failed to parse URL");
         
-        utils::authenticate(&mut client.client, client.username.clone(), client.password.clone()).await?;
-        Ok(client)
+        let response = self.client.get(url).send().await?;
+        
+        let body = response.text().await?;
+        let doc = Html::parse_document(&body);
+        
+        let mut domains: Vec<DomainInfo> = vec![];
+        
+        let domain_hit_selector = scraper::Selector::parse("form[data-domain-search-res]").unwrap();
+        let domain_owned_selector = scraper::Selector::parse("div.domain-hit[data-domain]").unwrap();
+        let domains_hit = doc.select(&domain_hit_selector);
+        //domains_hit.next().unwrap().has
+        
+        
+        
+        let domain_search_name_selector = scraper::Selector::parse("span.search-words").unwrap();
+        let mut search = doc.select(&domain_search_name_selector);
+        let name = search.next()
+            .unwrap()
+            .text()
+            .next()
+            .unwrap();
+        
+        // found (same as name, TODO: need to validate that the matches are the same. )
+        
+        println!("{}", name);
+        
+        let domain_ext_selector = scraper::Selector::parse("div.domain-hit span.tld").unwrap();
+        let extensions = doc.select(&domain_ext_selector);
+        for ext in extensions {
+            println!("{}", ext.text().next().unwrap());
+        }
+        
+        // get availability
+        
+        let domain_availability_selector = scraper::Selector::parse("div.domain-hit div.avail").unwrap();
+        let avails = doc.select(&domain_availability_selector);
+        for avail_txt in avails {
+            println!("{}", avail_txt.text().next().unwrap())
+        }
+        
+        Ok(vec![])
     }
+
+    pub async fn get_csrf_token(&mut self) -> Result<String, Error> {
+        let response = self.client.get(endpoints::BASE_URL.to_owned() + "/site/login").send().await?;
+        let body = response.text().await?;
+        let document = Html::parse_document(&body);
+        let path = scraper::Selector::parse("input[name=rackhost-csrf]").unwrap();
+        let csrf_token = document.select(&path).next().unwrap().value().attr("value").unwrap();
+
+        Ok(csrf_token.to_owned())
+    }
+}
+
+impl Default for RackhostClient<NotAuthed> {
+    fn default() -> Self {
+        Self {
+            _phantom_state: Default::default(),
+            client: Default::default(),
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
+enum DomainState {
+    Available,
+    Unavailable,
+    OwnedByUser
+}
+
+#[derive(Debug, Clone)]
+struct DomainInfo {
+    pub url: Url,
+    pub domain_state: DomainState
 }
 
 #[cfg(test)]
@@ -103,7 +153,7 @@ mod tests {
     async fn test_login() {
         let username = option_env!("TEST_USERNAME").expect("No username given for test");
         let password = option_env!("TEST_PASSWORD").expect("No password given for test");
-        let rackhost_client = RackHostClient::login(username.to_owned(), password.to_owned()).await;
+        let rackhost_client = RackhostClient::default().authenticate(username, password).await;
         let cli = match rackhost_client {
             Ok(client) => client,
             Err(err) => {
@@ -115,5 +165,12 @@ mod tests {
         
         assert!(true)
         
+    }
+    
+    #[tokio::test]
+    async fn test_domains() {
+        let client = RackhostClient::default();
+        //client.search_domain("testdomain").await.unwrap();
+        //client.search_domain("othertestdomain").await.unwrap();
     }
 }
