@@ -7,56 +7,91 @@
 // - Update a record in a dns zone
 // - Delete a record in a dns zone
 
-use crate::config::Config;
-use reqwest::{Client, Error};
-use scraper::Html;
+// ^^  bro really tried to use Copilot ^^
 
-
-mod config;
+use std::marker::PhantomData;
+use reqwest::Client;
 mod endpoints;
 
-const BASE_URL: &str = "https://rackhost.hu";
+struct Authed;
+struct NotAuthed;
+pub struct RackHostClient<LS /* Login State (or validation) */> {
+    _phantom_state: PhantomData<LS>,
 
-pub struct Rackhost {
-    config: Config,
+    username: String,
+    password: String,
+    user_agent: String,
+
     client: Client,
 }
 
-impl Rackhost {
-    pub fn new(config: Config) -> Self {
-        Self {
-            config,
-            client: Client::new(),
-        }
-    }
+mod utils {
+    use reqwest::{Client, Error};
+    use scraper::Html;
+    use crate::endpoints;
 
-    // TODO: check if csrf from login is also valid for other requests
-    async fn get_csrf_token(&self) -> Result<String, Error> {
-        let response = self.client.get(BASE_URL.to_owned() + "/site/login").send().await?;
+    pub async fn get_csrf_token(client: &Client) -> Result<String, Error> {
+        let response = client.get(endpoints::BASE_URL.to_owned() + "/site/login").send().await?;
         let body = response.text().await?;
         let document = Html::parse_document(&body);
         let path = scraper::Selector::parse("input[name=rackhost-csrf]").unwrap();
         let csrf_token = document.select(&path).next().unwrap().value().attr("value").unwrap();
+        
         Ok(csrf_token.to_owned())
     }
-
-    pub async fn login(&self) -> anyhow::Result<()> {
-        const LOGIN_URL: &str = "/site/login";
-
-        let csrf_token = self.get_csrf_token().await?;
-        let response = self.client.post(BASE_URL.to_owned() + LOGIN_URL)
+    
+    pub async fn authenticate(client: &mut Client, username: String, password: String) -> anyhow::Result<()> {
+        let csrf_token = get_csrf_token(client).await?;
+        let response = client.post(endpoints::BASE_URL.to_owned() + endpoints::LOGIN_PATH)
             .form(&[
                 ("rackhost-csrf", csrf_token),
-                ("LoginForm[username]", self.config.username.clone()),
-                ("LoginForm[password]", self.config.password.clone())
+                ("LoginForm[username]", username),
+                ("LoginForm[password]", password)
             ])
             .send().await?;
 
-        if response.url().as_str() == BASE_URL.to_owned() + LOGIN_URL {
+        if response.url().as_str() == endpoints::BASE_URL.to_owned() + endpoints::LOGIN_PATH {
             anyhow::bail!("Login failed");
         }
 
         Ok(())
+    }
+}
+
+impl RackHostClient<NotAuthed> {
+    pub fn new(username: String, password: String) -> Self {
+        Self {
+            _phantom_state: PhantomData::default(),
+            username,
+            password,
+            user_agent: "Firefox".to_string(), // current default
+            client: Client::new(),
+        }
+    }
+    pub async fn authenticate(mut self) -> anyhow::Result<RackHostClient<Authed>> {
+        utils::authenticate(&mut self.client, self.username.clone(), self.password.clone()).await?;
+        Ok(RackHostClient::<Authed>{
+            _phantom_state: PhantomData::default(),
+            username: self.username,
+            password: self.password,
+            user_agent: self.user_agent,
+            client: self.client,
+        })
+    }
+}
+
+impl RackHostClient<Authed> {
+    pub async fn login(username: String, password: String) -> anyhow::Result<Self> {
+        let mut client = Self {
+            _phantom_state: PhantomData::default(),
+            username,
+            password,
+            user_agent: "Firefox".to_owned(),
+            client: Client::new()
+        };
+        
+        utils::authenticate(&mut client.client, client.username.clone(), client.password.clone()).await?;
+        Ok(client)
     }
 }
 
@@ -66,10 +101,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_login() {
-        let config = Config::new("Firefox".to_owned(), "username".to_owned(), "pass".to_owned());
-        let rackhost = Rackhost::new(config);
-        let result = rackhost.login().await;
-        dbg!(&result);
-        assert!(result.is_ok());
+        let username = option_env!("TEST_USERNAME").expect("No username given for test");
+        let password = option_env!("TEST_PASSWORD").expect("No password given for test");
+        let rackhost_client = RackHostClient::login(username.to_owned(), password.to_owned()).await;
+        let cli = match rackhost_client {
+            Ok(client) => client,
+            Err(err) => {
+                dbg!(&err);
+                assert!(false);
+                return;
+            }
+        };
+        
+        assert!(true)
+        
     }
 }
