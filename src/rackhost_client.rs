@@ -20,7 +20,9 @@ pub struct DomainInfo {
     pub url: Url,
     pub domain_state: DomainState
 }
+// endregion
 
+//region Enums
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
 pub enum DomainState {
     Available,
@@ -74,6 +76,7 @@ impl Default for RackhostClient<NotAuthed> {
 }
 
 impl RackhostClient<Authed> {
+    
 }
 
 impl<L> RackhostClient<L> { // shared behaviour
