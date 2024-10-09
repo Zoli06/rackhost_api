@@ -5,6 +5,9 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.89"
-reqwest = "0.12.8"
+refined_type = "0.5.9"
+reqwest = { version = "0.12.8", features = ["cookies"] }
 scraper = "0.20.0"
+strum = "0.26.3"
+strum_macros = "0.26.4"
 tokio = { version = "1.40.0", features = ["rt", "macros"] }
