@@ -102,13 +102,12 @@ mod tests {
         };
         
         assert!(true)
-        
     }
     
     #[tokio::test]
     async fn test_domains() {
         let client = RackhostClient::default();
-        let domains = client.search_domain("test_domain").await;
+        let domains = client.search_domain("testdomain").await;
         println!("{:#?}", domains)
     }
 }

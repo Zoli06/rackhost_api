@@ -135,7 +135,6 @@ pub async fn search_domain<A>(rackhost_client: &RackhostClient<A>, name: impl In
     let domains_hit = doc.select(&domain_hit_selector);
     for element in domains_hit {
         let domain_name = element.attr("data-domain").unwrap();
-        println!("Hit: {}", domain_name);
         let domain_state;
 
         if element.has_class(&class_taken, CaseSensitivity::CaseSensitive) {
@@ -143,7 +142,7 @@ pub async fn search_domain<A>(rackhost_client: &RackhostClient<A>, name: impl In
         } else if element.has_class(&class_free, CaseSensitivity::CaseSensitive) {
             domain_state = DomainState::Available
         } else {
-            // idk
+            // owned by rackhost user.
             domain_state = DomainState::RegisteredOnRackhost
         }
 
