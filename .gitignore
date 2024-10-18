@@ -1,2 +1,4 @@
 /target
+/other
 Cargo.lock
+.env

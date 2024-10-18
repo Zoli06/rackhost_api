@@ -1,49 +1,104 @@
-pub mod rackhost_client;
+pub mod auth;
+pub mod base;
+pub mod csrf;
+pub mod record;
+pub mod zone;
+mod domain;
 
 #[cfg(test)]
 mod tests {
-    use crate::rackhost_client;
-    use crate::rackhost_client::RackhostClient;
+    use crate::auth::Authed;
+    use crate::base::RackhostClient;
+    use crate::record::{DnsRecord, NoId, RecordType, TTL};
+    use dotenv::dotenv;
+    use std::env::var;
+    use tokio::sync::OnceCell;
+    use tokio::test;
 
-    async fn get_client() -> RackhostClient<rackhost_client::Authed> {
-        let username = env!("RACKHOST_USERNAME");
-        let password = env!("RACKHOST_PASSWORD");
-        //let client = RackhostClient::default().authenticate(username, password).await.unwrap();
-        let client = RackhostClient::default()
-            .authenticate(username, password)
+    static CLIENT: OnceCell<RackhostClient<Authed>> = OnceCell::const_new();
+
+    async fn get_client() -> &'static RackhostClient<Authed> {
+        // load env
+        dotenv().ok();
+        CLIENT
+            .get_or_init(|| async {
+                let username = var("RACKHOST_USERNAME").expect("RACKHOST_USERNAME not set");
+                let password = var("RACKHOST_PASSWORD").expect("RACKHOST_PASSWORD not set");
+                // let reqwest_client_builder = reqwest::Client::builder()
+                //     .proxy(Proxy::all("http://localhost:8080").expect("Failed to create proxy"));
+
+                let reqwest_client_builder = reqwest::Client::builder();
+                RackhostClient::new(reqwest_client_builder)
+                    .authenticate(username, password)
+                    .await
+                    .expect("Failed to authenticate")
+            })
             .await
-            .expect("Failed to authenticate");
-        client
     }
 
-    #[tokio::test]
-    async fn test_login() {
-        let _client = get_client().await;
-    }
-
-    #[tokio::test]
-    async fn test_domains() {
-        let client = RackhostClient::default();
-        //client.search_domain("testdomain").await.unwrap();
-        //client.search_domain("othertestdomain").await.unwrap();
-    }
-
-    #[tokio::test]
+    #[test]
     async fn test_dns_zones() {
-        let client = get_client().await;
-        let zones = client.get_dns_zones().await.unwrap();
-        for zone in zones {
-            println!("{:?}", zone);
-        }
+        get_client()
+            .await
+            .get_dns_zones()
+            .await
+            .expect("Failed to get dns zones");
     }
 
-    #[tokio::test]
+    #[test]
     async fn test_dns_records() {
-        let client = get_client().await;
-        let zones = client.get_dns_zones().await.unwrap();
-        let records = client.get_dns_records(&zones[0]).await.unwrap();
-        for record in records {
-            println!("{:?}", record);
-        }
+        let zones = get_client()
+            .await
+            .get_dns_zones()
+            .await
+            .expect("Failed to get dns zones");
+        get_client()
+            .await
+            .get_dns_records(&zones[0])
+            .await
+            .expect("Failed to get dns records");
+    }
+
+    #[test]
+    async fn test_create_dns_record() {
+        let zones = get_client()
+            .await
+            .get_dns_zones()
+            .await
+            .expect("Failed to get dns zones");
+        let record: DnsRecord<NoId> = DnsRecord {
+            id: NoId,
+            host_name: "test.cs-z.hu".to_string(),
+            record_type: RecordType::A,
+            ttl: TTL::try_new(3600).expect("Failed to create TTL"),
+            target: "8.8.8.8".to_string(),
+        };
+        get_client()
+            .await
+            .create_dns_record(&zones[0], &record)
+            .await
+            .expect("Failed to create dns record");
+    }
+
+    #[test]
+    async fn test_update_dns_record() {
+        let zones = get_client()
+            .await
+            .get_dns_zones()
+            .await
+            .expect("Failed to get dns zones");
+        let records = get_client()
+            .await
+            .get_dns_records(&zones[0])
+            .await
+            .expect("Failed to get dns records");
+        let mut record = records[0].clone();
+        record.ttl = TTL::try_new(900).expect("Failed to create TTL");
+
+        get_client()
+            .await
+            .update_dns_record(&record)
+            .await
+            .expect("Failed to update dns record");
     }
 }
