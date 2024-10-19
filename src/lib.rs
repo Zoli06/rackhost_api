@@ -1,9 +1,9 @@
 pub mod auth;
 pub mod base;
+pub mod builder;
 pub mod csrf;
 pub mod record;
 pub mod zone;
-mod domain;
 
 #[cfg(test)]
 mod tests {
@@ -11,7 +11,9 @@ mod tests {
     use crate::base::RackhostClient;
     use crate::record::{DnsRecord, NoId, RecordType, TTL};
     use dotenv::dotenv;
+    use reqwest::{Client, Proxy};
     use std::env::var;
+    use std::time::Duration;
     use tokio::sync::OnceCell;
     use tokio::test;
 
@@ -24,11 +26,16 @@ mod tests {
             .get_or_init(|| async {
                 let username = var("RACKHOST_USERNAME").expect("RACKHOST_USERNAME not set");
                 let password = var("RACKHOST_PASSWORD").expect("RACKHOST_PASSWORD not set");
-                // let reqwest_client_builder = reqwest::Client::builder()
-                //     .proxy(Proxy::all("http://localhost:8080").expect("Failed to create proxy"));
 
-                let reqwest_client_builder = reqwest::Client::builder();
-                RackhostClient::new(reqwest_client_builder)
+                let reqwest_client_builder = Client::builder()
+                    .proxy(Proxy::all("http://localhost:8080").expect("Failed to create proxy"));
+
+                let rackhost_client = RackhostClient::builder()
+                    .client_builder(reqwest_client_builder)
+                    .rate_limit_from_duration(Duration::from_secs(3))
+                    .build();
+
+                rackhost_client
                     .authenticate(username, password)
                     .await
                     .expect("Failed to authenticate")
@@ -100,5 +107,24 @@ mod tests {
             .update_dns_record(&record)
             .await
             .expect("Failed to update dns record");
+    }
+
+    #[test]
+    async fn test_delete_dns_record() {
+        let zones = get_client()
+            .await
+            .get_dns_zones()
+            .await
+            .expect("Failed to get dns zones");
+        let records = get_client()
+            .await
+            .get_dns_records(&zones[0])
+            .await
+            .expect("Failed to get dns records");
+        get_client()
+            .await
+            .delete_dns_record(&records[0])
+            .await
+            .expect("Failed to delete dns record");
     }
 }

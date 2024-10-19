@@ -4,9 +4,9 @@ use sealed::sealed;
 use std::marker::PhantomData;
 
 #[derive(Debug, Clone)]
-pub(crate) struct Authed;
+pub struct Authed;
 #[derive(Debug, Clone)]
-pub(crate) struct NotAuthed;
+pub struct NotAuthed;
 
 #[sealed]
 pub trait AuthState {}

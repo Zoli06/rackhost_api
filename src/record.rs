@@ -87,66 +87,79 @@ impl From<DnsRecord<HasId>> for DnsRecord<NoId> {
 impl RackhostClient<Authed> {
     pub async fn get_dns_records(&self, zone: &DnsZone) -> Result<Vec<DnsRecord<HasId>>> {
         let url = BASE_URL.join(format!("dnsZone/{}", zone.id).as_str())?;
-        let response = self.client.get(url).send().await?;
-        let body = response.text().await?;
-        let doc = Html::parse_document(&body);
-
-        let record_selector =
-            Selector::parse("#dns-record-grid-0 table tbody tr").expect("Invalid selector");
-        let records = doc.select(&record_selector);
         let mut dns_records = vec![];
-        for record in records {
-            let host_name = record
-                .select(&Selector::parse("td:nth-child(1)").expect("Invalid selector"))
-                .next()
-                .expect("No name found")
-                .text()
-                .next()
-                .expect("No name found")
-                .to_owned();
-            let record_type = record
-                .select(&Selector::parse("td:nth-child(2)").expect("Invalid selector"))
-                .next()
-                .expect("No record type found")
-                .text()
-                .next()
-                .expect("No record type found")
-                .to_owned();
-            let value = record
-                .select(&Selector::parse("td:nth-child(3)").expect("Invalid selector"))
-                .next()
-                .expect("No value found")
-                .text()
-                .next()
-                .expect("No value found")
-                .to_owned();
-            let ttl = record
-                .select(&Selector::parse("td:nth-child(4)").expect("Invalid selector"))
-                .next()
-                .expect("No ttl found")
-                .text()
-                .next()
-                .expect("No ttl found")
-                .parse::<u32>()
-                .expect("Failed to parse ttl");
-            let id = record
-                .select(&Selector::parse("td:nth-child(5) a").expect("Invalid selector"))
-                .next()
-                .expect("No id found")
-                .value()
-                .attr("href")
-                .expect("No href found")
-                .split('/')
-                .last()
-                .expect("No id found")
-                .to_owned();
-            dns_records.push(DnsRecord {
-                id: HasId(id.parse().expect("Failed to parse id")),
-                host_name,
-                record_type: RecordType::from_str(&record_type).expect("Invalid record type"),
-                target: value,
-                ttl: TTL::try_new(ttl).expect("Invalid TTL"),
-            });
+        let mut has_next_page = true;
+        let mut page = 1;
+
+        while has_next_page {
+            let mut url = url.clone();
+            url.set_query(Some(format!("DnsRecord_page={}", page).as_str()));
+            let response = self.client.get(url).send().await?;
+            let body = response.text().await?;
+            let doc = Html::parse_document(&body);
+
+            let record_selector =
+                Selector::parse("#dns-record-grid-0 table tbody tr").expect("Invalid selector");
+            let records = doc.select(&record_selector);
+            for record in records {
+                let host_name = record
+                    .select(&Selector::parse("td:nth-child(1)").expect("Invalid selector"))
+                    .next()
+                    .expect("No name found")
+                    .text()
+                    .next()
+                    .expect("No name found")
+                    .to_owned();
+                let record_type = record
+                    .select(&Selector::parse("td:nth-child(2)").expect("Invalid selector"))
+                    .next()
+                    .expect("No record type found")
+                    .text()
+                    .next()
+                    .expect("No record type found")
+                    .to_owned();
+                let value = record
+                    .select(&Selector::parse("td:nth-child(3)").expect("Invalid selector"))
+                    .next()
+                    .expect("No value found")
+                    .text()
+                    .next()
+                    .expect("No value found")
+                    .to_owned();
+                let ttl = record
+                    .select(&Selector::parse("td:nth-child(4)").expect("Invalid selector"))
+                    .next()
+                    .expect("No ttl found")
+                    .text()
+                    .next()
+                    .expect("No ttl found")
+                    .parse::<u32>()
+                    .expect("Failed to parse ttl");
+                let id = record
+                    .select(&Selector::parse("td:nth-child(5) a").expect("Invalid selector"))
+                    .next()
+                    .expect("No id found")
+                    .value()
+                    .attr("href")
+                    .expect("No href found")
+                    .split('/')
+                    .last()
+                    .expect("No id found")
+                    .to_owned();
+                dns_records.push(DnsRecord {
+                    id: HasId(id.parse().expect("Failed to parse id")),
+                    host_name,
+                    record_type: RecordType::from_str(&record_type).expect("Invalid record type"),
+                    target: value,
+                    ttl: TTL::try_new(ttl).expect("Invalid TTL"),
+                });
+            }
+
+            // Check if there is a next page
+            let next_page_selector =
+                Selector::parse(".pager .next:not(.hidden)").expect("Invalid selector");
+            has_next_page = doc.select(&next_page_selector).next().is_some();
+            page += 1;
         }
 
         Ok(dns_records)
@@ -208,6 +221,27 @@ impl RackhostClient<Authed> {
         self.create_or_update_dns_record(url, &record)
             .await
             .expect("Failed to update record");
+        Ok(())
+    }
+
+    pub async fn delete_dns_record(&self, record: &DnsRecord<HasId>) -> Result<()> {
+        let url = BASE_URL.join(format!("dnsRecord/delete/{}", record.id).as_str())?;
+        let response = self
+            .client
+            .post(url)
+            .header("X-Requested-With", "XMLHttpRequest")
+            .form(&[("rackhost-csrf", self.get_csrf_token().await?)])
+            .send()
+            .await?;
+        let body = response.text().await?;
+        let json = serde_json::from_str::<serde_json::Value>(&body)?;
+        let message = json["message"].as_str().expect("No message found");
+        let message_html = Html::parse_fragment(message);
+        let selector = Selector::parse("div.alert-success").expect("Invalid selector");
+        let success = message_html.select(&selector).next().is_some();
+        if !success {
+            bail!("Failed to delete record");
+        }
         Ok(())
     }
 }
