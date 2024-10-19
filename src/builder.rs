@@ -19,7 +19,7 @@ impl RateLimiter for MyRateLimiter {
 }
 
 pub struct RackhostClientBuilder<R: RateLimiter> {
-    client_builder: ClientBuilder,
+    reqwest_client_builder: ClientBuilder,
     rate_limiter: R,
 }
 
@@ -30,14 +30,14 @@ impl<R: RateLimiter> RackhostClientBuilder<R> {
         };
 
         RackhostClientBuilder {
-            client_builder: ClientBuilder::new(),
+            reqwest_client_builder: ClientBuilder::new(),
             rate_limiter,
         }
     }
 
     pub fn client_builder(self, client_builder: ClientBuilder) -> RackhostClientBuilder<R> {
         RackhostClientBuilder {
-            client_builder,
+            reqwest_client_builder: client_builder,
             rate_limiter: self.rate_limiter,
         }
     }
@@ -49,7 +49,7 @@ impl<R: RateLimiter> RackhostClientBuilder<R> {
         let rate_limiter = MyRateLimiter { rate_limit };
 
         RackhostClientBuilder {
-            client_builder: self.client_builder,
+            reqwest_client_builder: self.reqwest_client_builder,
             rate_limiter,
         }
     }
@@ -59,14 +59,14 @@ impl<R: RateLimiter> RackhostClientBuilder<R> {
         rate_limiter: impl RateLimiter,
     ) -> RackhostClientBuilder<impl RateLimiter> {
         RackhostClientBuilder {
-            client_builder: self.client_builder,
+            reqwest_client_builder: self.reqwest_client_builder,
             rate_limiter,
         }
     }
 
     pub fn build(self) -> RackhostClient<NotAuthed> {
         let client = self
-            .client_builder
+            .reqwest_client_builder
             .cookie_store(true)
             .redirect(Policy::none())
             // Workaround for https://github.com/hyperium/hyper/issues/2312
